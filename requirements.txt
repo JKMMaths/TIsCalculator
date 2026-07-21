@@ -1,0 +1,12 @@
+streamlit
+rdkit
+pandas
+numpy
+py3Dmol
+xlsxwriter
+pillow
+openpyxl
+pytest
+requests
+tenacity
+pint

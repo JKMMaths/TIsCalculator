@@ -1,0 +1,17 @@
+name: drug-topology
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - rdkit
+  - pip
+  - pip:
+      - streamlit
+      - pandas
+      - numpy
+      - py3Dmol
+      - xlsxwriter
+      - pillow
+      - openpyxl
+      - pytest
