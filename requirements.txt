@@ -12,3 +12,4 @@ tenacity
 pint
 scikit-learn
 matplotlib
+networkx

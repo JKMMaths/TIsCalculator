@@ -24,6 +24,11 @@ from src.qsar_analysis import (
     create_qsar_report,
     run_qsar_analysis,
 )
+from src.network_pharmacology import (
+    NetworkPharmacologyResult, create_cytoscape_zip, create_report as create_network_report,
+    fetch_enrichment, fetch_string_interactions, gene_table, intersect_targets,
+    network_figure, rank_hubs, venn_figure,
+)
 from src.topological_indices import INDEX_METADATA, INDEX_ORDER
 from src.visualization import png_to_data_url, render_3d_viewer
 from src.property_sources.property_verification import build_property_report
@@ -150,7 +155,7 @@ def render_qsar_workspace() -> None:
     st.title("QSPR/QSAR Analysis")
     st.caption("Compare classical machine learning, deep learning, graph-theory, and hybrid AI models on a labelled molecular dataset.")
     with st.expander("Dataset requirements", expanded=True):
-        st.write("Upload a CSV containing one molecule per row, a SMILES column, and a measured or labelled endpoint. At least 12 valid labelled molecules are required. Larger, curated datasets produce more meaningful validation results.")
+        st.write("Upload a CSV containing one molecule per row, a SMILES column, and a measured or labelled endpoint. At least 6 valid labelled molecules are required. Larger, curated datasets produce more meaningful validation results.")
         template = pd.DataFrame({"SMILES": ["CCO", "CCCO", "c1ccccc1"], "Endpoint": [1.2, 1.8, 2.5]})
         st.download_button("Download CSV template", template.to_csv(index=False).encode("utf-8"), "qspr_qsar_template.csv", "text/csv")
 
@@ -161,7 +166,7 @@ def render_qsar_workspace() -> None:
         if data.empty:
             st.info("No generated molecules are available yet. Use Molecular Analysis to generate properties; each successfully analysed molecule is added here automatically.")
             return
-        st.info(f"Using {len(data)} unique molecule(s) generated in this session. At least 12 molecules with a common endpoint are required for modelling.")
+        st.info(f"Using {len(data)} unique molecule(s) generated in this session. At least 6 molecules with a common endpoint are required for modelling.")
     else:
         uploaded = st.file_uploader("Upload labelled CSV dataset", type=["csv"], key="qsar_csv")
         if uploaded is None:
@@ -266,6 +271,99 @@ def render_qsar_workspace() -> None:
         st.download_button("Download QSPR/QSAR Excel Report", report, "qspr_qsar_analysis_report.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
+def _genes_from_upload(uploaded: Any) -> list[str]:
+    if uploaded is None:
+        return []
+    frame = pd.read_csv(uploaded)
+    if frame.empty:
+        return []
+    likely = next((column for column in frame if column.lower() in {"gene", "symbol", "gene_symbol", "target"}), frame.columns[0])
+    return frame[likely].dropna().astype(str).tolist()
+
+
+def render_network_pharmacology_workspace() -> None:
+    """Collect compound/disease inputs and run a provenance-preserving workflow."""
+    st.title("Network Pharmacology")
+    st.caption("Identify drug–disease intersection genes, STRING protein interactions, hub proteins, and enriched GO/KEGG terms.")
+    with st.expander("Method and data requirements", expanded=True):
+        st.write("Enter the compound and disease at analysis time. Supply curated gene symbols exported from target databases and disease-gene databases; every list requires a source label. Public STRING and Enrichr services are queried only after an explicit run.")
+        st.warning("Database association and network centrality are hypothesis-generating evidence. They do not establish therapeutic efficacy, causality, or physical binding.")
+        target_template = pd.DataFrame({"Gene": ["AKT1", "EGFR", "TNF"]})
+        st.download_button("Download gene-list CSV template", target_template.to_csv(index=False).encode(), "gene_list_template.csv", "text/csv")
+
+    with st.form("network_pharmacology_form"):
+        left, right = st.columns(2)
+        with left:
+            compound = st.text_input("Compound/drug (name, PubChem CID, or SMILES)")
+            drug_source = st.text_input("Drug-target source(s)", placeholder="e.g., SwissTargetPrediction; DrugBank export; PubChem")
+            drug_text = st.text_area("Drug/compound target gene symbols", placeholder="AKT1, EGFR, TNF")
+            drug_file = st.file_uploader("Optional drug-target CSV", type=["csv"], key="network_drug_csv")
+        with right:
+            disease = st.text_input("Exact disease/condition name")
+            disease_source = st.text_input("Disease-gene source(s)", placeholder="e.g., DisGeNET; GeneCards export; OMIM")
+            disease_text = st.text_area("Disease-associated gene symbols", placeholder="TNF, IL6, EGFR")
+            disease_file = st.file_uploader("Optional disease-gene CSV", type=["csv"], key="network_disease_csv")
+        species_label = st.selectbox("Species", ["Homo sapiens (9606)", "Mus musculus (10090)", "Rattus norvegicus (10116)"])
+        score = st.slider("Minimum STRING interaction score", 150, 900, 400, 50, help="400 is medium confidence; higher values retain fewer, stronger associations.")
+        run = st.form_submit_button("Run Network Pharmacology Analysis", type="primary")
+
+    if run:
+        try:
+            if not compound.strip() or not disease.strip():
+                raise ValueError("Both compound/drug and disease are required.")
+            drug_genes = drug_text + " " + " ".join(_genes_from_upload(drug_file))
+            disease_genes = disease_text + " " + " ".join(_genes_from_upload(disease_file))
+            drug_targets = gene_table(drug_genes, drug_source, "Drug target")
+            disease_table = gene_table(disease_genes, disease_source, "Disease association")
+            if drug_targets.empty or disease_table.empty:
+                raise ValueError("Provide at least one gene symbol in each target list.")
+            overlap = intersect_targets(drug_targets, disease_table)
+            if overlap.empty:
+                raise ValueError("No drug–disease intersection genes were found. Check gene-symbol normalization and source lists.")
+            species = int(re.search(r"\((\d+)\)", species_label).group(1))
+            with st.spinner("Querying STRING, calculating network topology, and running GO/KEGG enrichment..."):
+                interactions = fetch_string_interactions(overlap["Gene"], species, score)
+                hubs = rank_hubs(overlap["Gene"], interactions)
+                enrichment = fetch_enrichment(overlap["Gene"]) if species == 9606 else pd.DataFrame()
+            st.session_state["network_result"] = NetworkPharmacologyResult(
+                compound.strip(), disease.strip(), species, drug_targets, disease_table,
+                overlap, interactions, hubs, enrichment,
+            )
+        except Exception as exc:
+            st.session_state.pop("network_result", None)
+            st.error(f"Analysis could not be completed: {exc}")
+            return
+
+    result = st.session_state.get("network_result")
+    if result is None:
+        return
+    st.success(f"Analysis completed: {len(result.intersections)} intersection gene(s), {len(result.interactions)} PPI edge(s).")
+    overlap_tab, ppi_tab, enrichment_tab, downloads_tab = st.tabs(["Intersection", "PPI and Hubs", "GO and KEGG", "Downloads"])
+    with overlap_tab:
+        venn = venn_figure(len(result.drug_targets), len(result.disease_genes), len(result.intersections))
+        st.image(venn, caption="Drug-target and disease-gene intersection")
+        st.dataframe(result.intersections, use_container_width=True, hide_index=True)
+    with ppi_tab:
+        if result.interactions.empty:
+            st.info("STRING returned no qualifying physical interactions. Intersection proteins are retained as isolated nodes.")
+        else:
+            st.image(network_figure(result.interactions, result.hubs), caption="STRING physical PPI network")
+            st.dataframe(result.interactions, use_container_width=True, hide_index=True)
+        st.subheader("Hub-protein ranking")
+        st.dataframe(result.hubs, use_container_width=True, hide_index=True)
+    with enrichment_tab:
+        if result.enrichment.empty:
+            st.info("No enrichment results were returned. Automated Enrichr libraries in this workflow are configured for human genes.")
+        else:
+            significant = result.enrichment[result.enrichment["Adjusted P-value"] <= 0.05]
+            st.dataframe(significant if not significant.empty else result.enrichment, use_container_width=True, hide_index=True)
+            chart_data = (significant if not significant.empty else result.enrichment).head(20).set_index("Term")[["Combined score"]]
+            st.bar_chart(chart_data)
+    with downloads_tab:
+        st.download_button("Download complete Excel report", create_network_report(result), "network_pharmacology_report.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button("Download Cytoscape-ready files", create_cytoscape_zip(result), "network_pharmacology_cytoscape.zip", "application/zip")
+
+
 INDEX_FORMULAS = {
     "M1": "Σ d_v²",
     "M2": "Σ d_u d_v",
@@ -292,13 +390,16 @@ def main() -> None:
     st.markdown("### Analysis Workspace")
     workspace = st.radio(
         "Select an analysis section",
-        ["Molecular Analysis", "QSPR/QSAR Analysis"],
+        ["Molecular Analysis", "QSPR/QSAR Analysis", "Network Pharmacology"],
         horizontal=True,
         key="analysis_workspace",
     )
     st.divider()
     if workspace == "QSPR/QSAR Analysis":
         render_qsar_workspace()
+        return
+    if workspace == "Network Pharmacology":
+        render_network_pharmacology_workspace()
         return
 
     st.title("Drug Molecular Structure and Topological Index Calculator")

@@ -31,7 +31,7 @@ from .topological_indices import INDEX_METADATA, INDEX_ORDER, calculate_topologi
 
 
 RANDOM_SEED = 42
-MINIMUM_ROWS = 12
+MINIMUM_ROWS = 6
 GRAPH_SYMBOLS = ["M1", "M2", "F", "R", "ABC", "GA", "H", "HM", "SCI", "ISI", "SO", "SOred", "mSO", "NSO"]
 
 

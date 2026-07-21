@@ -20,3 +20,4 @@ dependencies:
       - pint
       - scikit-learn
       - matplotlib
+      - networkx
