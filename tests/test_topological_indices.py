@@ -1,10 +1,11 @@
 import io
 
 import pytest
+from openpyxl import load_workbook
 
 from src.excel_export import create_excel_workbook
 from src.molecule import analyze_molecule, extract_3d_coordinates, generate_3d_sdf_bytes
-from src.topological_indices import calculate_edge_degree_distribution, calculate_topological_indices
+from src.topological_indices import INDEX_CATALOGUE, INDEX_ORDER, calculate_edge_degree_distribution, calculate_topological_indices
 from src.visualization import generate_3d_structure_png
 
 ATENOL_OL_SMILES = "CC(C)NCC(COC1=CC=C(C=C1)CC(=O)N)O"
@@ -66,6 +67,16 @@ def test_all_sixteen_indices_for_atenolol():
         assert values[name] == pytest.approx(value, rel=1e-4, abs=1e-4)
 
 
+def test_formula_catalogue_contains_all_93_entries():
+    result = analyze_molecule("Atenolol", ATENOL_OL_SMILES)
+
+    assert len(INDEX_CATALOGUE) == 93
+    assert len(INDEX_ORDER) == 93
+    assert all(symbol in result.index_values for symbol in INDEX_ORDER)
+    assert result.index_values["W"] == pytest.approx(890.0)
+    assert result.index_values["Rα"] is None
+
+
 def test_invalid_smiles():
     result = analyze_molecule("Broken", "not-a-smiles")
     assert result.error_message is not None
@@ -106,6 +117,12 @@ def test_excel_workbook_generation_and_sheets():
     workbook_bytes = create_excel_workbook(result)
     assert isinstance(workbook_bytes, bytes)
     assert len(workbook_bytes) > 0
+
+    workbook = load_workbook(io.BytesIO(workbook_bytes), read_only=True)
+    sheet = workbook["Topological Indices"]
+    assert sheet["B1"].value == "Topological Index Name"
+    assert sheet["B2"].value == "First Zagreb Index"
+    assert sheet["C2"].value == "M1"
 
 
 def test_3d_sdf_bytes_generation():

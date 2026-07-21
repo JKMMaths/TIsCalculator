@@ -17,7 +17,8 @@ This project provides a Streamlit application for parsing a SMILES string, valid
 - 2D structure rendering with a white background
 - Interactive 3D structure rendering with py3Dmol
 - Molecular descriptors and graph metrics
-- 16 degree-based topological indices
+- Complete 93-entry formula catalogue covering degree, neighbourhood, distance,
+  resistance, matching/counting, spectral, and information families
 - Edge-degree distribution table
 - Excel workbook export with multiple worksheets
 - 2D PNG and 3D SDF downloads
@@ -82,6 +83,18 @@ SMILES:
 ```text
 CC(C)NCC(COC1=CC=C(C=C1)CC(=O)N)O
 ```
+
+## Formula catalogue behavior
+
+The formulas and naming follow `Topological_Indices_Formula_Catalogue.docx`.
+Directly specified degree-, neighbourhood-, distance-, resistance-, and spectral
+descriptors are calculated locally. Entries that require an unspecified alpha
+parameter or vertex partition, and exact exponential detour/matching/counting
+algorithms, remain visible in the app and report as `Requires specification`.
+This avoids presenting an arbitrary convention as a calculated scientific result.
+
+The original aliases `RSO` and `MSO` remain available programmatically; the UI
+uses the catalogue symbols `SOred` and `mSO`.
 
 ## Expected Atenolol validation values
 

@@ -16,7 +16,7 @@ from rdkit import Chem
 
 from src.excel_export import create_excel_workbook
 from src.molecule import MoleculeAnalysisResult, analyze_molecule, extract_3d_coordinates, generate_3d_sdf_bytes
-from src.topological_indices import INDEX_ORDER
+from src.topological_indices import INDEX_METADATA, INDEX_ORDER
 from src.visualization import png_to_data_url, render_3d_viewer
 from src.property_sources.property_verification import build_property_report
 
@@ -84,14 +84,15 @@ def build_topology_dataframe(result: MoleculeAnalysisResult) -> pd.DataFrame:
 
     rows = []
     for idx, name in enumerate(INDEX_ORDER, start=1):
-        value = result.index_values.get(name, 0.0)
+        value = result.index_values.get(name)
+        metadata = INDEX_METADATA[name]
         rows.append(
             {
                 "No.": idx,
-                "Topological Index": name,
+                "Topological Index Name": metadata["name"],
                 "Symbol": name,
-                "Mathematical Formula": INDEX_FORMULAS.get(name, "-"),
-                "Calculated Value": value,
+                "Mathematical Formula": metadata["formula"],
+                "Calculated Value": value if value is not None else "Requires specification",
             }
         )
     return pd.DataFrame(rows)
