@@ -15,3 +15,6 @@ dependencies:
       - pillow
       - openpyxl
       - pytest
+      - requests
+      - tenacity
+      - pint
