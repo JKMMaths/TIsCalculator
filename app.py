@@ -16,6 +16,7 @@ from rdkit import Chem
 
 from src.excel_export import create_excel_workbook
 from src.molecule import MoleculeAnalysisResult, analyze_molecule, extract_3d_coordinates, generate_3d_sdf_bytes
+from src.qsar_analysis import create_qsar_report, run_qsar_analysis
 from src.topological_indices import INDEX_METADATA, INDEX_ORDER
 from src.visualization import png_to_data_url, render_3d_viewer
 from src.property_sources.property_verification import build_property_report
@@ -44,6 +45,39 @@ def property_table(report: dict[str, Any]) -> pd.DataFrame:
         conditions = "; ".join(v for v in [record.get("temperature"), record.get("pressure")] if v) or "-"
         rows.append({"Property": record.get("property"), "Selected/display value": record.get("normalized_value"), "Unit": record.get("normalized_unit"), "Value type": record.get("value_type"), "Measurement conditions": conditions, "Source": record.get("source"), "Reference": record.get("reference_number"), "Verification status": record.get("verification_status")})
     return pd.DataFrame(rows)
+
+
+def _numeric_property_value(value: Any) -> float | None:
+    """Extract one finite numeric value without inventing values for ranges/text."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value) if pd.notna(value) else None
+    if isinstance(value, (list, tuple)) and len(value) == 1:
+        return _numeric_property_value(value[0])
+    return None
+
+
+def remember_generated_properties(result: MoleculeAnalysisResult) -> None:
+    """Add the current molecule to the session's modelling dataset."""
+    row: dict[str, Any] = {
+        "Drug name": result.drug_name or result.formula,
+        "SMILES": result.canonical_smiles,
+        "Molecular weight": result.molecular_weight,
+        "Exact molecular weight": result.exact_molecular_weight,
+        "TPSA": result.tpsa,
+        "LogP (RDKit)": result.logp,
+        "Molar refractivity": result.molar_refractivity,
+    }
+    # Retain the first usable value for each sourced property. Conflicting source
+    # records are not averaged, because that would obscure experimental context.
+    for record in (result.property_report or {}).get("records", []):
+        value = _numeric_property_value(record.get("normalized_value"))
+        name = str(record.get("property") or "").strip()
+        unit = str(record.get("normalized_unit") or "").strip()
+        if value is not None and name:
+            row.setdefault(f"{name} ({unit})" if unit else name, value)
+    history = st.session_state.setdefault("generated_property_rows", [])
+    history[:] = [item for item in history if item.get("SMILES") != result.canonical_smiles]
+    history.append(row)
 
 
 def sanitize_filename(name: str) -> str:
@@ -98,6 +132,95 @@ def build_topology_dataframe(result: MoleculeAnalysisResult) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def render_qsar_workspace() -> None:
+    """Render the dataset-level QSPR/QSAR analysis workspace."""
+
+    st.title("QSPR/QSAR Analysis")
+    st.caption("Compare classical machine learning, deep learning, graph-theory, and hybrid AI models on a labelled molecular dataset.")
+    with st.expander("Dataset requirements", expanded=True):
+        st.write("Upload a CSV containing one molecule per row, a SMILES column, and a measured or labelled endpoint. At least 12 valid labelled molecules are required. Larger, curated datasets produce more meaningful validation results.")
+        template = pd.DataFrame({"SMILES": ["CCO", "CCCO", "c1ccccc1"], "Endpoint": [1.2, 1.8, 2.5]})
+        st.download_button("Download CSV template", template.to_csv(index=False).encode("utf-8"), "qspr_qsar_template.csv", "text/csv")
+
+    source = st.radio("Dataset source", ["Automatically generated thermophysical data", "Upload CSV"], horizontal=True)
+    if source == "Automatically generated thermophysical data":
+        rows = st.session_state.get("generated_property_rows", [])
+        data = pd.DataFrame(rows)
+        if data.empty:
+            st.info("No generated molecules are available yet. Use Molecular Analysis to generate properties; each successfully analysed molecule is added here automatically.")
+            return
+        st.info(f"Using {len(data)} unique molecule(s) generated in this session. At least 12 molecules with a common endpoint are required for modelling.")
+    else:
+        uploaded = st.file_uploader("Upload labelled CSV dataset", type=["csv"], key="qsar_csv")
+        if uploaded is None:
+            st.info("Upload a CSV dataset to configure and run the analysis.")
+            return
+        try:
+            data = pd.read_csv(uploaded)
+        except Exception as exc:
+            st.error(f"The CSV could not be read: {exc}")
+            return
+    if len(data.columns) < 2:
+        st.error("The CSV must contain at least a SMILES column and an endpoint column.")
+        return
+
+    st.subheader("Dataset preview")
+    st.dataframe(data.head(25), use_container_width=True, hide_index=True)
+    left, middle, right = st.columns(3)
+    with left:
+        default_smiles = list(data.columns).index("SMILES") if "SMILES" in data.columns else 0
+        smiles_column = st.selectbox("SMILES column", list(data.columns), index=default_smiles)
+    with middle:
+        target_options = [column for column in data.columns if column not in {smiles_column, "Drug name"}]
+        if not target_options:
+            st.error("No usable thermophysical endpoint column is available.")
+            return
+        target_column = st.selectbox("Thermophysical endpoint/target", target_options)
+    with right:
+        task = st.selectbox("Analysis task", ["Auto-detect", "Regression", "Classification"])
+    test_percent = st.slider("Held-out test set", min_value=15, max_value=40, value=20, step=5)
+
+    if st.button("Run QSPR/QSAR Analysis", type="primary"):
+        with st.spinner("Building molecular features and training four models..."):
+            try:
+                analysis_result = run_qsar_analysis(data, smiles_column, target_column, task, test_percent / 100)
+                analysis_result.configuration["Dataset source"] = source
+                analysis_result.configuration["Endpoint"] = target_column
+                st.session_state["qsar_result"] = analysis_result
+            except Exception as exc:
+                st.session_state.pop("qsar_result", None)
+                st.error(str(exc))
+                return
+
+    result = st.session_state.get("qsar_result")
+    if result is not None and (
+        result.configuration.get("Dataset source") != source
+        or result.configuration.get("Endpoint") != target_column
+    ):
+        result = None
+    if result is None:
+        return
+    st.success(f"{result.task_type.title()} analysis completed.")
+    metrics_tab, predictions_tab, report_tab = st.tabs(["Model Comparison", "Test Predictions", "Report and Download"])
+    with metrics_tab:
+        st.subheader("Held-out performance")
+        st.dataframe(result.metrics, use_container_width=True, hide_index=True)
+        metric = "R²" if result.task_type == "regression" else "Balanced Accuracy"
+        chart = result.metrics.set_index("Model")[[metric]]
+        st.bar_chart(chart)
+        st.caption("Metrics are calculated only on the held-out test set. They are validation estimates, not experimental confirmation.")
+    with predictions_tab:
+        st.dataframe(result.predictions, use_container_width=True, hide_index=True)
+        if not result.excluded_rows.empty:
+            st.subheader("Excluded input rows")
+            st.dataframe(result.excluded_rows, use_container_width=True, hide_index=True)
+    with report_tab:
+        st.subheader("Run configuration")
+        st.dataframe(pd.DataFrame(result.configuration.items(), columns=["Setting", "Value"]), use_container_width=True, hide_index=True)
+        report = create_qsar_report(result)
+        st.download_button("Download QSPR/QSAR Excel Report", report, "qspr_qsar_analysis_report.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
 INDEX_FORMULAS = {
     "M1": "Σ d_v²",
     "M2": "Σ d_u d_v",
@@ -120,6 +243,11 @@ INDEX_FORMULAS = {
 
 def main() -> None:
     """Render the Streamlit UI and handle results."""
+
+    workspace = st.sidebar.radio("Workspace", ["Molecular Analysis", "QSPR/QSAR Analysis"])
+    if workspace == "QSPR/QSAR Analysis":
+        render_qsar_workspace()
+        return
 
     st.title("Drug Molecular Structure and Topological Index Calculator")
     st.caption(
@@ -172,6 +300,7 @@ def main() -> None:
         if not result.property_report:
             with st.spinner("Retrieving available physicochemical properties..."):
                 result.property_report = retrieve_properties_cached(result.canonical_smiles)
+        remember_generated_properties(result)
 
         structures_tab, topology_tab, properties_tab, sources_tab, downloads_tab = st.tabs(["Molecular Structures", "Topological Indices", "Physicochemical Properties", "Sources and Verification", "Downloads"])
         with structures_tab:

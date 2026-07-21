@@ -24,6 +24,10 @@ This project provides a Streamlit application for parsing a SMILES string, valid
 - 2D PNG and 3D SDF downloads
 - Best-effort PubChem physicochemical-property retrieval with source records and verification status
 - RDKit InChI/InChIKey generation and clearly-labelled calculated MolLogP/MolMR values
+- Dataset-level QSPR/QSAR workspace with classical random forests, a multilayer
+  neural network, graph-theory features, and a hybrid chemical-feature model
+- Held-out regression/classification metrics, row-level predictions, invalid-row
+  reporting, and a downloadable multi-sheet Excel analysis report
 
 ## Screenshots
 

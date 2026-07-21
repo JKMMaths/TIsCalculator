@@ -10,3 +10,4 @@ pytest
 requests
 tenacity
 pint
+scikit-learn
