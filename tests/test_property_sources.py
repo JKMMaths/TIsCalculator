@@ -81,3 +81,10 @@ def test_excel_source_sheet_generation():
     result.property_report = {"pubchem_cid": 702, "inchikey": result.inchikey, "retrieved_at": "2026-01-01T00:00:00Z", "structure_verified": True, "records": [_record(100, "Source A", 1)]}
     workbook = openpyxl.load_workbook(BytesIO(create_excel_workbook(result)))
     assert {"Physicochemical Properties", "Raw Property Records", "Data Sources"}.issubset(workbook.sheetnames)
+
+
+def test_excel_export_accepts_property_ranges():
+    result = analyze_molecule("Ethanol", "CCO")
+    result.property_report = {"records": [{**_record(100, "Source A", 1), "normalized_value": [99.0, 101.0]}]}
+    workbook = openpyxl.load_workbook(BytesIO(create_excel_workbook(result)))
+    assert workbook["Physicochemical Properties"].cell(2, 2).value == "99.0 – 101.0"

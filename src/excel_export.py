@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from io import BytesIO
 from typing import Any
 
@@ -9,6 +10,15 @@ import pandas as pd
 from xlsxwriter import Workbook
 
 from .molecule import MoleculeAnalysisResult
+
+
+def _excel_value(value: Any) -> Any:
+    """Return an XlsxWriter-compatible value without losing reported ranges."""
+    if isinstance(value, (list, tuple)):
+        return " – ".join(str(item) for item in value)
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False)
+    return value
 
 
 def create_excel_workbook(result: MoleculeAnalysisResult) -> bytes:
@@ -98,13 +108,13 @@ def create_excel_workbook(result: MoleculeAnalysisResult) -> bytes:
     for row_idx, record in enumerate(records, start=1):
         # Each value is retained: conflicting records are intentionally not averaged.
         conditions = "; ".join(x for x in [record.get("temperature"), record.get("pressure")] if x) or "-"
-        properties_sheet.write_row(row_idx, 0, [record.get("property"), record.get("normalized_value"), record.get("normalized_unit"), record.get("value_type"), conditions, record.get("source"), record.get("reference_number"), record.get("verification_status")])
+        properties_sheet.write_row(row_idx, 0, [_excel_value(value) for value in [record.get("property"), record.get("normalized_value"), record.get("normalized_unit"), record.get("value_type"), conditions, record.get("source"), record.get("reference_number"), record.get("verification_status")]])
 
     raw_sheet = workbook.add_worksheet("Raw Property Records")
     raw_headers = ["Property", "Original value", "Original unit", "Normalized value", "Normalized unit", "Temperature", "Pressure", "Description", "Value type", "Source", "Reference", "Source URL"]
     raw_sheet.write_row(0, 0, raw_headers, bold)
     for row_idx, record in enumerate(records, start=1):
-        raw_sheet.write_row(row_idx, 0, [record.get("property"), record.get("original_value"), record.get("original_unit"), record.get("normalized_value"), record.get("normalized_unit"), record.get("temperature"), record.get("pressure"), record.get("description"), record.get("value_type"), record.get("source"), record.get("reference_number"), record.get("source_url")])
+        raw_sheet.write_row(row_idx, 0, [_excel_value(value) for value in [record.get("property"), record.get("original_value"), record.get("original_unit"), record.get("normalized_value"), record.get("normalized_unit"), record.get("temperature"), record.get("pressure"), record.get("description"), record.get("value_type"), record.get("source"), record.get("reference_number"), record.get("source_url")]])
 
     sources_sheet = workbook.add_worksheet("Data Sources")
     sources_sheet.write_row(0, 0, ["PubChem CID", "InChIKey", "Retrieval timestamp", "Structure verified", "Source URL"], bold)
