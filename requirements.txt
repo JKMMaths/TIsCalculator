@@ -11,3 +11,4 @@ requests
 tenacity
 pint
 scikit-learn
+matplotlib

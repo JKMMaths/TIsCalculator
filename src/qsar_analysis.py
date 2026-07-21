@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Any
+from zipfile import ZIP_DEFLATED, ZipFile
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from rdkit import Chem
@@ -25,7 +27,7 @@ from sklearn.neural_network import MLPClassifier, MLPRegressor
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 
-from .topological_indices import calculate_topological_indices
+from .topological_indices import INDEX_METADATA, INDEX_ORDER, calculate_topological_indices
 
 
 RANDOM_SEED = 42
@@ -74,6 +76,97 @@ def _prepare_dataset(data: pd.DataFrame, smiles_column: str, target_column: str)
         np.asarray(descriptors), np.asarray(graph), np.asarray(fingerprints), np.asarray(targets),
         np.asarray(source_rows), pd.DataFrame(excluded, columns=["CSV row", "SMILES", "Reason"]),
     )
+
+
+def add_topological_index_columns(data: pd.DataFrame, smiles_column: str) -> pd.DataFrame:
+    """Return a copy with every calculated scalar TI added as a numeric column."""
+    augmented = data.copy()
+    calculated: list[dict[str, float]] = []
+    for value in augmented[smiles_column]:
+        mol = Chem.MolFromSmiles(str(value).strip()) if pd.notna(value) else None
+        row: dict[str, float] = {}
+        if mol is not None:
+            indices = calculate_topological_indices(mol)
+            for symbol in INDEX_ORDER:
+                index_value = indices.get(symbol)
+                if index_value is not None and np.isfinite(index_value):
+                    row[f"TI | {symbol} | {INDEX_METADATA[symbol]['name']}"] = float(index_value)
+        calculated.append(row)
+    ti_frame = pd.DataFrame(calculated, index=augmented.index)
+    for column in ti_frame:
+        augmented[column] = ti_frame[column]
+    return augmented
+
+
+def correlation_table(data: pd.DataFrame, property_column: str, ti_columns: list[str]) -> pd.DataFrame:
+    """Calculate pairwise Pearson and Spearman correlations for one property."""
+    rows = []
+    prop = pd.to_numeric(data[property_column], errors="coerce")
+    for column in ti_columns:
+        ti = pd.to_numeric(data[column], errors="coerce")
+        valid = prop.notna() & ti.notna() & np.isfinite(prop) & np.isfinite(ti)
+        if valid.sum() < 3 or prop[valid].nunique() < 2 or ti[valid].nunique() < 2:
+            continue
+        rows.append({
+            "Physicochemical Property": property_column,
+            "Topological Index": column.removeprefix("TI | "),
+            "TI Column": column,
+            "Sample Count": int(valid.sum()),
+            "Pearson r": float(prop[valid].corr(ti[valid], method="pearson")),
+            "Spearman ρ": float(prop[valid].corr(ti[valid], method="spearman")),
+        })
+    result = pd.DataFrame(rows)
+    if not result.empty:
+        result["Absolute Pearson r"] = result["Pearson r"].abs()
+        result = result.sort_values("Absolute Pearson r", ascending=False).reset_index(drop=True)
+    return result
+
+
+def create_correlation_plot(data: pd.DataFrame, property_column: str, ti_column: str) -> bytes:
+    """Render a publication-ready TI-versus-property scatter plot as PNG."""
+    x = pd.to_numeric(data[ti_column], errors="coerce")
+    y = pd.to_numeric(data[property_column], errors="coerce")
+    valid = x.notna() & y.notna() & np.isfinite(x) & np.isfinite(y)
+    if valid.sum() < 3:
+        raise ValueError("At least three paired numeric observations are required for a correlation graph.")
+    x_values, y_values = x[valid].to_numpy(), y[valid].to_numpy()
+    figure, axis = plt.subplots(figsize=(8, 5.5), dpi=160)
+    axis.scatter(x_values, y_values, color="#1f77b4", alpha=0.8, edgecolors="white", linewidths=0.5)
+    if np.unique(x_values).size > 1:
+        slope, intercept = np.polyfit(x_values, y_values, 1)
+        line_x = np.linspace(x_values.min(), x_values.max(), 100)
+        axis.plot(line_x, slope * line_x + intercept, color="#d62728", linewidth=2, label="Linear fit")
+        axis.legend()
+    pearson = pd.Series(x_values).corr(pd.Series(y_values), method="pearson")
+    spearman = pd.Series(x_values).corr(pd.Series(y_values), method="spearman")
+    axis.set_title(f"Topological Index vs {property_column}\nPearson r={pearson:.4f}; Spearman ρ={spearman:.4f}; n={len(x_values)}")
+    axis.set_xlabel(ti_column.removeprefix("TI | "))
+    axis.set_ylabel(property_column)
+    axis.grid(alpha=0.2)
+    figure.tight_layout()
+    output = BytesIO()
+    figure.savefig(output, format="png", bbox_inches="tight")
+    plt.close(figure)
+    return output.getvalue()
+
+
+def create_all_property_graphs_zip(data: pd.DataFrame, property_columns: list[str], ti_columns: list[str]) -> bytes:
+    """Create one graph per property using its strongest Pearson-correlated TI."""
+    output = BytesIO()
+    with ZipFile(output, "w", ZIP_DEFLATED) as archive:
+        summaries = []
+        for number, prop in enumerate(property_columns, start=1):
+            table = correlation_table(data, prop, ti_columns)
+            if table.empty:
+                continue
+            best = table.iloc[0]
+            png = create_correlation_plot(data, prop, best["TI Column"])
+            safe_name = "".join(character if character.isalnum() else "_" for character in prop).strip("_")
+            archive.writestr(f"{number:02d}_{safe_name}.png", png)
+            summaries.append(table.drop(columns=["TI Column"]))
+        if summaries:
+            archive.writestr("correlation_summary.csv", pd.concat(summaries, ignore_index=True).to_csv(index=False))
+    return output.getvalue()
 
 
 def _resolve_task(target: np.ndarray, requested: str) -> str:

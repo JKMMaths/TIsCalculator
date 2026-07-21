@@ -28,6 +28,9 @@ This project provides a Streamlit application for parsing a SMILES string, valid
   neural network, graph-theory features, and a hybrid chemical-feature model
 - Held-out regression/classification metrics, row-level predictions, invalid-row
   reporting, and a downloadable multi-sheet Excel analysis report
+- Pearson and Spearman topological-index versus physicochemical-property
+  correlation tables, fitted scatter plots, individual PNG downloads, and a ZIP
+  containing the strongest TI correlation graph for every numeric property
 
 ## Screenshots
 

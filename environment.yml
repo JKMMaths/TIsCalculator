@@ -19,3 +19,4 @@ dependencies:
       - tenacity
       - pint
       - scikit-learn
+      - matplotlib

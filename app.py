@@ -16,7 +16,14 @@ from rdkit import Chem
 
 from src.excel_export import create_excel_workbook
 from src.molecule import MoleculeAnalysisResult, analyze_molecule, extract_3d_coordinates, generate_3d_sdf_bytes
-from src.qsar_analysis import create_qsar_report, run_qsar_analysis
+from src.qsar_analysis import (
+    add_topological_index_columns,
+    correlation_table,
+    create_all_property_graphs_zip,
+    create_correlation_plot,
+    create_qsar_report,
+    run_qsar_analysis,
+)
 from src.topological_indices import INDEX_METADATA, INDEX_ORDER
 from src.visualization import png_to_data_url, render_3d_viewer
 from src.property_sources.property_verification import build_property_report
@@ -38,6 +45,11 @@ def retrieve_properties_cached(canonical_smiles: str) -> dict[str, Any]:
     """Cache best-effort REST retrieval without caching the RDKit Mol object."""
     mol = Chem.MolFromSmiles(canonical_smiles)
     return build_property_report(mol) if mol is not None else {}
+
+
+@st.cache_data(show_spinner=False)
+def correlation_data_cached(data: pd.DataFrame, smiles_column: str) -> pd.DataFrame:
+    return add_topological_index_columns(data, smiles_column)
 
 def property_table(report: dict[str, Any]) -> pd.DataFrame:
     rows = []
@@ -180,6 +192,39 @@ def render_qsar_workspace() -> None:
         task = st.selectbox("Analysis task", ["Auto-detect", "Regression", "Classification"])
     test_percent = st.slider("Held-out test set", min_value=15, max_value=40, value=20, step=5)
 
+    st.subheader("Topological Index vs Physicochemical Property Correlation")
+    with st.spinner("Calculating topological indices for correlation analysis..."):
+        correlation_data = correlation_data_cached(data, smiles_column)
+    ti_columns = [column for column in correlation_data.columns if column.startswith("TI | ")]
+    property_columns = []
+    for column in data.columns:
+        if column in {smiles_column, "Drug name"}:
+            continue
+        numeric = pd.to_numeric(data[column], errors="coerce")
+        if numeric.notna().sum() >= 3 and numeric.nunique() >= 2:
+            property_columns.append(column)
+    if not property_columns or not ti_columns:
+        st.info("At least three paired numeric observations are required before TI–property correlation graphs can be generated.")
+    else:
+        property_choice = st.selectbox("Physicochemical property", property_columns, key="correlation_property")
+        correlations = correlation_table(correlation_data, property_choice, ti_columns)
+        if correlations.empty:
+            st.info("No variable topological index has enough paired observations for this property.")
+        else:
+            display_correlations = correlations.drop(columns=["TI Column"])
+            st.dataframe(display_correlations, use_container_width=True, hide_index=True)
+            ti_labels = correlations["Topological Index"].tolist()
+            ti_choice = st.selectbox("Topological index", ti_labels, key="correlation_ti")
+            ti_column = correlations.loc[correlations["Topological Index"] == ti_choice, "TI Column"].iloc[0]
+            graph_png = create_correlation_plot(correlation_data, property_choice, ti_column)
+            st.image(graph_png, caption=f"{ti_choice} vs {property_choice}", use_container_width=True)
+            download_left, download_right = st.columns(2)
+            with download_left:
+                st.download_button("Download selected graph (PNG)", graph_png, "ti_property_correlation.png", "image/png")
+            with download_right:
+                all_graphs = create_all_property_graphs_zip(correlation_data, property_columns, ti_columns)
+                st.download_button("Download graphs for all properties (ZIP)", all_graphs, "ti_property_correlation_graphs.zip", "application/zip")
+
     if st.button("Run QSPR/QSAR Analysis", type="primary"):
         with st.spinner("Building molecular features and training four models..."):
             try:
@@ -244,7 +289,14 @@ INDEX_FORMULAS = {
 def main() -> None:
     """Render the Streamlit UI and handle results."""
 
-    workspace = st.sidebar.radio("Workspace", ["Molecular Analysis", "QSPR/QSAR Analysis"])
+    st.markdown("### Analysis Workspace")
+    workspace = st.radio(
+        "Select an analysis section",
+        ["Molecular Analysis", "QSPR/QSAR Analysis"],
+        horizontal=True,
+        key="analysis_workspace",
+    )
+    st.divider()
     if workspace == "QSPR/QSAR Analysis":
         render_qsar_workspace()
         return
