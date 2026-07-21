@@ -43,12 +43,14 @@ def parse_pug_view(payload: dict[str, Any], property_name: str, cid: int | None 
             if not refs:
                 refs = [{}]
             for ref in refs:
+                # PUG View may provide a full reference object or a scalar reference ID.
+                ref_data = ref if isinstance(ref, dict) else {"ReferenceNumber": ref}
                 description = info.get("Description", "")
                 lower = f"{text} {description}".lower()
                 kind = "Predicted" if any(word in lower for word in ("predicted", "estimated", "calculated")) else "Experimental"
                 records.append({
-                    "property": property_name, "reference_number": ref.get("ReferenceNumber"),
-                    "source": ref.get("SourceName") or "PubChem", "original_value": text,
+                    "property": property_name, "reference_number": ref_data.get("ReferenceNumber"),
+                    "source": ref_data.get("SourceName") or "PubChem", "original_value": text,
                     "numeric_value": numeric, "original_unit": unit, "normalized_value": normalized,
                     "normalized_unit": normalized_unit, "temperature": _condition(text, "(?:at|@)\\s*([-+]?\\d+(?:\\.\\d+)?)\\s*°?([CFK])"),
                     "pressure": _condition(text, "(?:at|@)\\s*([-+]?\\d+(?:\\.\\d+)?)\\s*(mm\\s*Hg|Pa|bar)"),

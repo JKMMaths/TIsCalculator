@@ -43,6 +43,6 @@ class PubChemClient:
             try:
                 payload = self._get(f"{BASE}/pug_view/data/compound/{cid}/JSON?heading={requests.utils.quote(heading)}")
                 records.extend(parse_pug_view(payload, heading, cid))
-            except requests.RequestException as exc:
-                logger.info("PubChem heading unavailable (%s): %s", heading, exc)
+            except Exception as exc:  # Parsing variance must never stop the local application.
+                logger.info("PubChem heading unavailable or unreadable (%s): %s", heading, exc)
         return records

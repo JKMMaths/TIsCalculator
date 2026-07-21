@@ -35,6 +35,12 @@ def test_nested_pug_view_parsing_and_experimental_classification():
     assert rows[0]["value_type"] == "Experimental"
 
 
+def test_scalar_pug_view_reference_is_preserved():
+    payload = {"Record": {"Section": [{"Information": [{"Value": {"String": "100 °C"}, "Reference": [42]}]}]}}
+    rows = parse_pug_view(payload, "Melting Point", 1)
+    assert rows[0]["reference_number"] == 42
+
+
 def test_temperature_and_range_conversion():
     assert normalize_value(273.15, "K", "Melting Point") == (0.0, "degC")
     values, unit = normalize_value([32, 212], "°F", "Boiling Point")
