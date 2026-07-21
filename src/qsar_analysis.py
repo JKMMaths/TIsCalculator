@@ -173,7 +173,11 @@ def _resolve_task(target: np.ndarray, requested: str) -> str:
     if requested in {"Regression", "Classification"}:
         return requested.lower()
     numeric = pd.to_numeric(pd.Series(target), errors="coerce")
-    if numeric.notna().all() and numeric.nunique() > max(10, int(len(target) * 0.1)):
+    # Continuous endpoints in small datasets can have fewer than the former
+    # 10-value threshold. Treat numeric values as regression when most rows are
+    # unique, while retaining binary/low-cardinality numeric class labels.
+    unique_count = numeric.nunique()
+    if numeric.notna().all() and unique_count > 2 and unique_count / len(numeric) > 0.5:
         return "regression"
     return "classification"
 

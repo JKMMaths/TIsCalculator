@@ -54,6 +54,28 @@ def test_classification_analysis():
     assert set(result.predictions["Actual"]).issubset({"low", "high"})
 
 
+def test_auto_detects_six_unique_numeric_endpoints_as_regression():
+    data = pd.DataFrame({
+        "SMILES": ["C", "CC", "CCC", "CCCC", "CCCCC", "CCCCCC"],
+        "Endpoint": [1.1, 1.8, 2.4, 3.3, 4.1, 5.2],
+    })
+
+    result = run_qsar_analysis(data, "SMILES", "Endpoint", "Auto-detect", test_size=0.34)
+
+    assert result.task_type == "regression"
+
+
+def test_auto_detect_keeps_numeric_binary_labels_as_classification():
+    data = pd.DataFrame({
+        "SMILES": ["C", "CC", "CCC", "CCCC", "CCCCC", "CCCCCC"],
+        "Endpoint": [0, 0, 0, 1, 1, 1],
+    })
+
+    result = run_qsar_analysis(data, "SMILES", "Endpoint", "Auto-detect", test_size=0.34)
+
+    assert result.task_type == "classification"
+
+
 def test_ti_property_correlation_graph_downloads():
     smiles = ["C" * length for length in range(1, 13)]
     data = pd.DataFrame({"SMILES": smiles, "Boiling point": [20.0 + 7.5 * len(value) for value in smiles]})
