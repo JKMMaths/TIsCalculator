@@ -104,6 +104,24 @@ def sanitize_filename(name: str) -> str:
     return cleaned or "molecular_topological_indices"
 
 
+def populate_missing_drug_name(result: MoleculeAnalysisResult) -> None:
+    """Fill a missing name only when the molecular identity is unambiguous."""
+    if result.drug_name.strip():
+        result.drug_name = result.drug_name.strip()
+        return
+
+    for example_name, example_smiles in EXAMPLE_SMILES.items():
+        example_mol = Chem.MolFromSmiles(example_smiles)
+        if example_mol is not None and Chem.MolToSmiles(example_mol, canonical=True) == result.canonical_smiles:
+            result.drug_name = example_name
+            return
+
+    report = result.property_report or {}
+    if report.get("structure_verified"):
+        computed = report.get("computed") or {}
+        result.drug_name = str(computed.get("Title") or computed.get("IUPACName") or "").strip()
+
+
 def display_summary_cards(result: MoleculeAnalysisResult) -> None:
     """Show summary cards for key molecular descriptors."""
 
@@ -453,6 +471,7 @@ def main() -> None:
         if not result.property_report:
             with st.spinner("Retrieving available physicochemical properties..."):
                 result.property_report = retrieve_properties_cached(result.canonical_smiles)
+        populate_missing_drug_name(result)
         remember_generated_properties(result)
 
         structures_tab, topology_tab, properties_tab, sources_tab, downloads_tab = st.tabs(["Molecular Structures", "Topological Indices", "Physicochemical Properties", "Sources and Verification", "Downloads"])

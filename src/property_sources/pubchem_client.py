@@ -30,7 +30,7 @@ class PubChemClient:
             return None
 
     def computed_properties(self, cid: int) -> dict[str, Any]:
-        props = "MolecularFormula,MolecularWeight,XLogP,TPSA,HBondDonorCount,HBondAcceptorCount,CanonicalSMILES,InChI,InChIKey"
+        props = "Title,IUPACName,MolecularFormula,MolecularWeight,XLogP,TPSA,HBondDonorCount,HBondAcceptorCount,CanonicalSMILES,InChI,InChIKey"
         try:
             return self._get(f"{BASE}/pug/compound/cid/{cid}/property/{props}/JSON").get("PropertyTable", {}).get("Properties", [{}])[0]
         except requests.RequestException as exc:
